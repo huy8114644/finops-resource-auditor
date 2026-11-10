@@ -1,0 +1,46 @@
+{
+  "scanned_at": "2026-01-15T00:00:00+00:00",
+  "regions": ["us-east-1", "ap-southeast-1"],
+  "findings": [
+    {
+      "resource_type": "ebs_unattached",
+      "resource_id": "vol-01020304050607080",
+      "region": "us-east-1",
+      "reason": "Currently unattached; created 45 days ago. Detach age is unknown.",
+      "estimated_monthly_savings_usd": 16.0,
+      "estimate_basis": "Provisioned GiB × static storage-only rate",
+      "age_days": 45,
+      "metadata": {"volume_type": "gp3", "size_gib": 200}
+    },
+    {
+      "resource_type": "snapshot_old",
+      "resource_id": "snap-01020304050607080",
+      "region": "us-east-1",
+      "reason": "Created 140 days ago; verify retention, AMI and backup dependencies.",
+      "estimated_monthly_savings_usd": null,
+      "estimate_basis": "Unknown: provisioned volume size is not incremental billed storage",
+      "age_days": 140,
+      "metadata": {"source_volume_size_gib": 500, "source_volume_id": "vol-0a0b0c"}
+    },
+    {
+      "resource_type": "elbv2_no_targets",
+      "resource_id": "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:loadbalancer/app/demo/1",
+      "region": "ap-southeast-1",
+      "reason": "No registered targets now; verify traffic, listeners and fixed responses. This is not a historical idle-traffic check.",
+      "estimated_monthly_savings_usd": 16.43,
+      "estimate_basis": "Base hourly rate $0.0225 × 730; excludes capacity",
+      "age_days": 60,
+      "metadata": {"name": "demo", "type": "application"}
+    },
+    {
+      "resource_type": "ecr_old_image",
+      "resource_id": "api@sha256:1234567890abcdef",
+      "region": "ap-southeast-1",
+      "reason": "Pushed 90 days ago; last use and deployment references are unknown.",
+      "estimated_monthly_savings_usd": 0.25,
+      "estimate_basis": "Reported bytes / 2^30 × $0.10; shared layers can overstate savings; not additive guaranteed savings",
+      "age_days": 90,
+      "metadata": {"tags": [], "size_bytes": 2684354560, "repository": "api"}
+    }
+  ]
+}

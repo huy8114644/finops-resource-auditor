@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "FinOpsInventoryReadOnly",
+    "Effect": "Allow",
+    "Action": [
+      "ec2:DescribeVolumes", "ec2:DescribeSnapshots",
+      "elasticloadbalancing:DescribeLoadBalancers",
+      "elasticloadbalancing:DescribeTargetGroups",
+      "elasticloadbalancing:DescribeTargetHealth",
+      "elasticloadbalancing:DescribeTags",
+      "ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:ListTagsForResource"
+    ],
+    "Resource": "*"
+  }]
+}

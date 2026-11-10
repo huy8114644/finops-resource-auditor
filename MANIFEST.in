@@ -1,0 +1,4 @@
+include AGENTS.md LICENSE
+recursive-include docs *.md *.json
+recursive-include fixtures *.json
+recursive-include tests *.py
