@@ -61,7 +61,7 @@ def test_telegram_delivery(monkeypatch):
 
 
 def test_telegram_invalid_token(monkeypatch):
-    monkeypatch.setenv("FINOPS_TELEGRAM_TOKEN", "123456/invalid")
+    monkeypatch.setenv("FINOPS_TELEGRAM_TOKEN", "invalid/token")
     monkeypatch.setenv("FINOPS_TELEGRAM_CHAT_ID", "123")
     with pytest.raises(ValueError):
         notify("telegram", "alert")
