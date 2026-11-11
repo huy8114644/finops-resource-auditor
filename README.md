@@ -1,131 +1,106 @@
 # FinOps Resource Auditor
 
 [![Offline quality checks](https://github.com/huy8114644/finops-resource-auditor/actions/workflows/ci.yml/badge.svg)](https://github.com/huy8114644/finops-resource-auditor/actions/workflows/ci.yml)
-[![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python)](https://python.org)
-[![AWS: Read Only](https://img.shields.io/badge/AWS-Strictly%20Read%20Only-orange.svg?logo=amazon-aws)](docs/read-only-policy.json)
-[![Coverage: 95%+](https://img.shields.io/badge/Coverage-95.5%25-success.svg)](tests/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Production-grade, **Read-Only AWS FinOps CLI and Automation Engine** that discovers abandoned cloud assets, calculates transparent cost savings estimates, and alerts engineering teams without modifying cloud state.
+A Python 3.11+ CLI for reviewing AWS resources that may no longer be needed. It gathers read-only inventory, applies age and exclusion rules, and reports candidates with illustrative cost estimates. The project helps operators assemble a review queue; it does not prove waste, historical idleness or achievable savings, and implements no cleanup commands.
 
----
-
-## 🎯 Problem Statement & Core Value
-
-Over 30% of enterprise cloud spend is wasted on abandoned, orphaned resources — unattached EBS volumes left after EC2 termination, aged snapshots without retention policies, idle Application Load Balancers with zero registered targets, and legacy container images.
-
-This tool delivers safe, automated FinOps governance:
-1. **Strictly Read-Only:** Zero deletion or mutation APIs; safe to execute in production environments without change advisory boards.
-2. **Transparent Cost Methodology:** Plainly documents assumptions (storage rates, base hourly ELB rates) and marks non-attributable assets (EBS snapshot incremental blocks) as `unpriced` rather than guessing.
-3. **Multi-Region & Automated Alerts:** Dispatches executive summary reports to Slack incoming webhooks or Telegram bot channels.
-
----
-
-## 🏛️ FinOps Auditing Architecture
+## Architecture and data flow
 
 ```mermaid
-flowchart TD
-    subgraph Ingestion ["1. Multi-Region Read-Only Ingestion (Boto3)"]
-        A[AWS EC2: DescribeVolumes<br/>Status: Available]
-        B[AWS EC2: DescribeSnapshots<br/>Owner: Self, Age > Threshold]
-        C[AWS ELBv2: DescribeLoadBalancers<br/>Zero Healthy / Registered Targets]
-        D[AWS ECR: DescribeImages<br/>Untagged or Stale Push Date]
-    end
-
-    subgraph Engine ["2. FinOps Analysis & Policy Filter"]
-        A & B & C & D --> E{Tag Evaluator}
-        E -->|finops:ignore=true| F[Skip / Exclude Resource]
-        E -->|Protected Tags<br/>latest, prod, stable| F
-        E -->|Qualifies as Candidate| G[Finding Generator<br/>WasteFinding Schema]
-    end
-
-    subgraph Pricing ["3. Transparent Pricing Engine"]
-        G --> H[EBS Storage Rate: Provisioned GiB x $0.08]
-        G --> I[ELB Base Rate: $0.0225/hr x 730 hrs]
-        G --> J[ECR Layer Rate: Image Bytes x $0.10/GiB]
-        G --> K[Snapshot Volume: Intentionally Unpriced]
-    end
-
-    subgraph Reports ["4. Actionable Reporting & Notification"]
-        H & I & J & K --> L[AuditSummary Report]
-        L --> M[Terminal Plain Text Table]
-        L --> N[Structured JSON Report File]
-        L --> O[Slack / Telegram Webhook Alerts]
-    end
-
-    classDef dark fill:#0d1117,stroke:#238636,stroke-width:1.5px,color:#c9d1d9;
-    class Ingestion,Engine,Pricing,Reports dark;
+flowchart LR
+    Fixture[Bundled synthetic fixture / local JSON] --> Summary[Typed findings and sorted summary]
+    AWS[AWS inventory in selected regions] --> Reads[Paginated boto3 read APIs]
+    Reads --> Filters[Resource age, finops:ignore tags and ECR tag protection]
+    Filters --> Estimate[Static illustrative rates / unknown types unpriced]
+    Estimate --> Summary
+    Summary --> Text[Terminal text or JSON]
+    Summary --> File[Optional local JSON output]
+    Summary --> OptIn{Explicit --notify}
+    OptIn --> Slack[Slack webhook]
+    OptIn --> Telegram[Telegram bot]
 ```
 
----
+| Candidate | Actual qualification | Interpretation and pricing limit |
+| --- | --- | --- |
+| EBS | Currently `available`, no attachments, creation age at least 14 days by default | Detach age is unknown; storage-only static rate by volume type |
+| Snapshots | Owned by account, completed, at least 90 days old | AMI/backup dependencies need review; incremental billed storage is unknown, so unpriced |
+| ELBv2 | At least 14 days old and no registered targets across target groups | No traffic-history check; fixed-response listeners may still serve traffic; ALB/NLB base estimate is $16.43/month, other types unpriced |
+| ECR | At least 30 days since push; untagged by default | Last use is unknown; reported bytes × $0.10/GiB may double-count shared layers |
 
-## 🔒 Resource Detection & Cost Methodology
+`finops:ignore=true` excludes volumes, snapshots and load balancers, and excludes all images in a tagged ECR repository. Tagged images require `--include-tagged-ecr`; protected image tags still exclude them. The tag comparisons follow the code's exact keys and image tag spelling. Prices are static examples applied across all regions, not an AWS price feed. See [cost methodology and review workflow](docs/cost-methodology.md).
 
-| Target Resource | Qualification Rule | Pricing Model | Caveat & Review Guidance |
-|---|---|---|---|
-| **Unattached EBS** | `State == 'available'` & age >= `volume_days` | Provisioned GiB × $0.08/mo (gp3) | Detach timestamp is unrecorded by AWS; verify snapshot history |
-| **Aged Snapshots** | `State == 'completed'` & age >= `snapshot_days` | **Unpriced** (`null`) | Provisioned size is not billed incremental delta; check AMI dependencies |
-| **Idle Load Balancers** | Zero registered targets across all target groups | Base hourly rate ($0.0225/hr × 730 hrs) | Excludes capacity units (LCU); verify DNS cutover before decommissioning |
-| **Old ECR Images** | Untagged or age >= `image_days` (unprotected) | Uncompressed size × $0.10/GiB | Shared layers can overstate savings; verify rollback tags |
+## Local quickstart
 
----
-
-## ⚙️ Environment Variables & Configuration
-
-The auditor is configured via environment variables and CLI arguments:
-
-| Variable | Type | Default | Description |
-|---|---|---|---|
-| `AWS_PROFILE` | String | `null` | Named AWS CLI profile granting read-only credentials |
-| `AWS_DEFAULT_REGION` | String | `us-east-1` | Default fallback AWS region |
-| `FINOPS_SLACK_WEBHOOK` | String | `null` | Slack incoming webhook URL for automated summary delivery |
-| `FINOPS_TELEGRAM_TOKEN` | String | `null` | Telegram Bot token for incident alerts |
-| `FINOPS_TELEGRAM_CHAT_ID` | String | `null` | Telegram channel or group chat ID |
-
----
-
-## 🚀 Local Developer Quickstart
-
-Standardized operational tasks are automated via the included `Makefile`:
+Requirements: Python 3.11+ and Make. Docker is optional as a fallback for Gitleaks; the repository has no application Dockerfile or Compose deployment.
 
 ```bash
-# 1. View all available Makefile commands
-make help
-
-# 2. Setup virtual environment and development dependencies
-make setup
-
-# 3. Run Ruff linter and code formatting check
+make                 # help only
+make setup           # local venv and editable package with dev tools
 make lint
-
-# 4. Run Mypy static type verification (strict mode)
 make typecheck
-
-# 5. Execute Pytest test suite with code coverage
-make test
-
-# 6. Execute offline FinOps discovery demo (no AWS account required)
-make audit-demo
+make test            # offline Stubber tests; coverage gate 85%
+make plan            # synthetic JSON on stdout; no AWS or notifications
+make audit-demo      # synthetic text report
+make scan            # local Gitleaks or pinned Docker image; fails if unavailable
+make build           # wheel and source archive
+.venv/bin/finops-audit --demo --format json --output demo-report.json
 ```
 
----
+The demo is synthetic and is not evidence of real savings. Local tests use dummy credentials and disable instance metadata. No Make target performs a live scan or sends a notification. `scan` checks working-tree content, including untracked files; it does not audit Git history. Scanner findings and tool failures cause a nonzero exit.
 
-## ☸️ Live AWS Multi-Region Scanning
+## Configuration
+
+Select exactly one input mode: `--demo`, `--fixture PATH`, or `--live`. No input mode is implicit.
+
+| CLI option | Default | Purpose |
+| --- | --- | --- |
+| `--regions` | `us-east-1` | Comma-separated regions for live inventory; fixture supplies its own regions |
+| `--volume-days` / `--snapshot-days` | `14` / `90` | Minimum creation age in days |
+| `--lb-days` / `--image-days` | `14` / `30` | Minimum load-balancer creation / image push age |
+| `--include-tagged-ecr` | Off | Include old tagged images except protected tags |
+| `--protected-tags` | `latest,prod,production,stable` | Exact protected ECR tag names |
+| `--format` | `text` | Terminal `text` or `json` |
+| `--output` | Unset | Write JSON report locally regardless of terminal format |
+| `--notify` | Unset | Explicit `slack` or `telegram` summary delivery; also works in demo mode |
+
+| Environment | Default / source | Purpose |
+| --- | --- | --- |
+| `AWS_PROFILE` | boto3 credential chain | Optional local named profile for live mode; CLI has no `--profile` option |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | boto3 credential chain | Alternative credentials for live mode; prefer short-lived credentials |
+| `AWS_DEFAULT_REGION` | boto3 environment setting | Does not override CLI `--regions`, which explicitly defaults to `us-east-1` |
+| `AWS_EC2_METADATA_DISABLED` | SDK setting; `true` in tests/CI | Disables instance metadata credential lookup |
+| `FINOPS_SLACK_WEBHOOK` | Unset | Required only for `--notify slack`; HTTPS Slack services URL |
+| `FINOPS_TELEGRAM_TOKEN` / `FINOPS_TELEGRAM_CHAT_ID` | Unset | Required only for `--notify telegram` |
+
+There is no `.env` loader. Export values in your shell or use a managed execution environment; never commit credentials, webhooks, tokens or real inventory reports.
+
+## CI and delivery
+
+```mermaid
+flowchart LR
+    Trigger[Push / PR / manual / daily schedule] --> Matrix[Python 3.11 and 3.12]
+    Matrix --> Lint[Ruff and strict mypy]
+    Lint --> Tests[Offline tests with 85 percent coverage gate]
+    Tests --> Build[Build wheel and source archive]
+    Build --> Demo[Generate synthetic JSON]
+    Demo --> Artifacts[Upload report, coverage and packages for 7 days]
+    Artifacts --> Review[Review evidence and selected revision]
+    Review --> Operator[Operator installs reviewed package manually]
+```
+
+CI uses dummy AWS credentials and performs no live AWS scans, notifications or package publication. Gitleaks is available via `make scan` but is not currently a CI job. Workflow definitions describe intended checks; consult actual runs before claiming success or a measured coverage percentage.
+
+To deliver, build and validate a chosen revision, install its wheel in an isolated virtual environment, and run `finops-audit --demo --format json`. Retain the previous wheel and dependency environment for rollback. No service, cloud infrastructure or scheduler is deployed by this repository. If you add a scheduler externally, disable it before changing versions; restore the prior environment to roll back the CLI. Reports and already delivered notifications cannot be recalled by a package rollback.
+
+For an explicitly authorized live review, use a dedicated least-privilege read role based on [the example policy](docs/read-only-policy.json), verify account/regions, and run:
 
 ```bash
-# Run against live AWS account with custom thresholds
-finops-audit --live \
-  --regions us-east-1,us-west-2,ap-southeast-1 \
-  --volume-days 14 \
-  --snapshot-days 90 \
-  --lb-days 14 \
-  --output live-report.json
-
-# Send summary alert to Slack
-finops-audit --demo --notify slack
+AWS_PROFILE=review .venv/bin/finops-audit --live \
+  --regions us-east-1,us-west-2 --format json --output report.json
 ```
 
----
+Live mode contacts AWS and can incur API charges or throttling. Review ownership, retention, dependencies, observed traffic and current regional billing before taking action through a separately approved workflow. Notifications are a separate explicit CLI opt-in; local development and CI should keep that option unset.
 
-## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under [MIT](LICENSE).
+
+[Local validation evidence](docs/local-validation.md) records measured checks and the limits of this documentation revision.

@@ -1,9 +1,11 @@
 SHELL := /bin/bash
+.DEFAULT_GOAL := help
 VENV ?= .venv
 BIN := $(abspath $(VENV))/bin
+GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.24.3
 export PATH := $(BIN):$(PATH)
 
-.PHONY: all help setup lint typecheck test scan audit-demo build clean
+.PHONY: all help setup lint typecheck test scan plan audit-demo build clean
 
 all: lint typecheck test
 
@@ -14,6 +16,7 @@ help:
 	@echo "  make typecheck    Run Mypy static type verification (strict mode)"
 	@echo "  make test         Execute Pytest unit tests with coverage reporting"
 	@echo "  make scan         Run Gitleaks credential scanning audit"
+	@echo "  make plan         Render synthetic JSON offline; no AWS or notifications"
 	@echo "  make audit-demo   Execute offline FinOps audit using synthetic fixtures"
 	@echo "  make build        Build Python sdist and wheel packages"
 	@echo "  make clean        Remove build artifacts and temporary test caches"
@@ -36,8 +39,16 @@ test:
 	$(BIN)/pytest
 
 scan:
-	@echo "==> Running Gitleaks credential scan..."
-	@which gitleaks >/dev/null 2>&1 && gitleaks detect --verbose || echo "[INFO] gitleaks CLI not installed locally; enforced via GitHub Actions CI"
+	@if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks detect --no-git --source . --redact; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$(CURDIR):/repo:ro" $(GITLEAKS_IMAGE) detect --no-git --source /repo --redact; \
+	else \
+		echo "Install Gitleaks or Docker to run the required scan." >&2; exit 1; \
+	fi
+
+plan:
+	$(BIN)/finops-audit --demo --format json
 
 audit-demo:
 	@echo "==> Executing offline FinOps discovery demo..."
